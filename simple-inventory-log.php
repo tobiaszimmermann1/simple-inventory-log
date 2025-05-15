@@ -11,7 +11,6 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-// Autoload the main class
 require_once plugin_dir_path( __FILE__ ) . 'includes/class-simple-inventory-log.php';
 
 // Initialize the plugin
