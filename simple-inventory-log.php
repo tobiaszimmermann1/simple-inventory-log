@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Simple Inventory Log
  * Description: Logs stock changes (increase/decrease) for products.
- * Version: 1.0.0
+ * Version: 0.1.0
  * Author: Tobias Zimmermann
  * License: GPL2+
  */
