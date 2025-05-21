@@ -50,6 +50,7 @@ class Simple_Inventory_Log {
     public function run() {
         add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );    
         self::hook_into_stock_changes();
+        add_action( 'admin_post_export_inventory_log', [ $this, 'export_inventory_log' ] );
     }
 
     public function add_admin_menu() {
@@ -89,6 +90,13 @@ class Simple_Inventory_Log {
         ), ARRAY_A );
 
         echo '<div class="wrap"><h1>Simple Inventory Log</h1>';
+        
+        echo '<div class="tablenav top">';
+        echo '<div class="alignleft actions">';
+        echo '<a href="' . esc_url(admin_url('admin-post.php?action=export_inventory_log')) . '" class="button button-primary">Export to Excel</a>';
+        echo '</div>';
+        echo '<div class="clear"></div>';
+        echo '</div>';
 
         if ( empty( $logs ) ) {
             echo '<p>No logs found.</p>';
@@ -300,5 +308,75 @@ class Simple_Inventory_Log {
 
             set_transient( $transient_key, $queue, 10 * MINUTE_IN_SECONDS );
         }
+    }
+
+    public function export_inventory_log() {
+        // Check user capabilities
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+        }
+
+        // get data
+        global $wpdb;
+        $table = self::$table_name;
+        $logs = $wpdb->get_results( "SELECT * FROM $table ORDER BY date DESC", ARRAY_A );
+
+        if ( empty( $logs ) ) {
+            // Redirect back to the log page with a message
+            wp_redirect( admin_url( 'admin.php?page=simple-inventory-log&export_status=empty' ) );
+            exit;
+        }
+        
+        // Set the headers for the CSV download
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="inventory_log.csv"');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+
+        $output = fopen('php://output', 'w');
+
+        $data = array();
+
+        // set header row
+        $header = array(
+            'ID',
+            'Product ID',
+            'Product Name',
+            'SKU',
+            'Date',
+            'Stock Change',
+            'Stock',
+            'Action',
+            'User Name',
+            'User ID',
+            'Note'
+        );
+        array_push($data, $header);
+
+        // set data rows
+        foreach ( $logs as $log ) {
+            array_push($data, array(
+                $log['id'],
+                $log['product_id'],
+                $log['product_name'],
+                $log['sku'],
+                $log['date'],
+                $log['stock_change'],
+                $log['stock'],
+                $log['action'],
+                $log['user_name'],
+                $log['user_id'],
+                $log['note']
+            ));
+        }
+
+        // Populate the CSV with data
+        foreach ($data as $item) {
+            fputcsv($output, $item);
+        }
+
+        // Close the output stream
+        fclose($output);
+        exit;
     }
 }

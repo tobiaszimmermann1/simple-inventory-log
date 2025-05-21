@@ -11,6 +11,10 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+if (file_exists(plugin_dir_path(__FILE__) . 'vendor/autoload.php')) {
+    require_once plugin_dir_path(__FILE__) . 'vendor/autoload.php';
+}
+
 require_once plugin_dir_path( __FILE__ ) . 'includes/class-simple-inventory-log.php';
 
 // Initialize the plugin
