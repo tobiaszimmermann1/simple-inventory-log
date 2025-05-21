@@ -364,7 +364,7 @@ class Simple_Inventory_Log {
                 $log['stock_change'],
                 $log['stock'],
                 $log['action'],
-                $log['user_name'],
+                $log['relation'],
                 $log['user_id'],
                 $log['note']
             ));
