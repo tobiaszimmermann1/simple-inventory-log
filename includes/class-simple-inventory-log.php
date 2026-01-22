@@ -134,23 +134,45 @@ class Simple_Inventory_Log {
     public function render_pagination($current_page, $total_pages) {
         if ($total_pages > 1) {
             $base_url = admin_url('admin.php?page=simple-inventory-log');
-            $pagination = '<div class="tablenav"><div class="tablenav-pages">';
+            $pagination = '<div class="tablenav"><div class="tablenav-pages" style="display: flex; gap: 5px; flex-wrap: wrap;">';
             
             // Previous page link
             if ($current_page > 1) {
-                $pagination .= '<a class="first-page" href="' . esc_url(add_query_arg('paged', 1, $base_url)) . '">&laquo; First</a>';
-                $pagination .= '<a class="prev-page" href="' . esc_url(add_query_arg('paged', $current_page - 1, $base_url)) . '">Prev</a>';
+                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', 1, $base_url)) . '">&laquo; First</a>';
+                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $current_page - 1, $base_url)) . '">Prev</a>';
+            }
+
+            // Calculate page range (max 10 pages)
+            $max_pages = 10;
+            $half_range = floor($max_pages / 2);
+            $start_page = max(1, $current_page - $half_range);
+            $end_page = min($total_pages, $start_page + $max_pages - 1);
+            
+            // Adjust start_page if end_page is at total_pages
+            if ($end_page - $start_page + 1 < $max_pages) {
+                $start_page = max(1, $end_page - $max_pages + 1);
+            }
+
+            // Show ellipsis if there are pages before start_page
+            if ($start_page > 1) {
+                $pagination .= '<span style="align-self: center;">...</span>';
             }
 
             // Page numbers
-            for ($i = 1; $i <= $total_pages; $i++) {
-                $pagination .= '<a class="page-numbers" href="' . esc_url(add_query_arg('paged', $i, $base_url)) . '">' . $i . '</a>';
+            for ($i = $start_page; $i <= $end_page; $i++) {
+                $button_class = $i === $current_page ? 'button button-primary' : 'button';
+                $pagination .= '<a class="' . $button_class . '" href="' . esc_url(add_query_arg('paged', $i, $base_url)) . '">' . $i . '</a>';
+            }
+
+            // Show ellipsis if there are pages after end_page
+            if ($end_page < $total_pages) {
+                $pagination .= '<span style="align-self: center;">...</span>';
             }
 
             // Next page link
             if ($current_page < $total_pages) {
-                $pagination .= '<a class="next-page" href="' . esc_url(add_query_arg('paged', $current_page + 1, $base_url)) . '">Next</a>';
-                $pagination .= '<a class="last-page" href="' . esc_url(add_query_arg('paged', $total_pages, $base_url)) . '">Last &raquo;</a>';
+                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $current_page + 1, $base_url)) . '">Next</a>';
+                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $total_pages, $base_url)) . '">Last &raquo;</a>';
             }
 
             $pagination .= '</div></div>';
