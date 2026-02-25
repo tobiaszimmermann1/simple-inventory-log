@@ -1,0 +1,75 @@
+/* Simple Inventory Log – Admin Styles */
+
+/* ── Filter bar ─────────────────────────────────────────────────────────── */
+.sil-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    background: #fff;
+    border: 1px solid #e2e4e7;
+    padding: 14px 16px;
+    margin: 16px 0;
+}
+
+.sil-filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.sil-filters input[type="text"],
+.sil-filters input[type="date"],
+.sil-filters select {
+    min-width: 160px;
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+.sil-table th a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.sil-table th a:hover {
+    color: #2271b1;
+}
+
+.sil-table th.sorted a {
+    color: #2271b1;
+}
+
+.sil-table th.sorted-asc a::after {
+    content: ' ↑';
+}
+
+.sil-table th.sorted-desc a::after {
+    content: ' ↓';
+}
+
+/* ── Stock-change cell ──────────────────────────────────────────────────── */
+.sil-stock-positive {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+.sil-stock-negative {
+    color: #d63638;
+    font-weight: 600;
+}
+
+/* ── Pagination ─────────────────────────────────────────────────────────── */
+.sil-pagination {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.sil-pagination .ellipsis {
+    align-self: center;
+    padding: 0 4px;
+    color: #646970;
+}
