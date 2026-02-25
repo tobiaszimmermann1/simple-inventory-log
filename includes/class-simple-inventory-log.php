@@ -1,404 +1,651 @@
 <?php
 
 if ( ! defined( 'ABSPATH' ) ) {
-    exit;
+exit;
 }
 
 class Simple_Inventory_Log {
-    private static $table_name;
+private static $table_name;
 
-    public function __construct() {
-        global $wpdb;
-        self::$table_name = $wpdb->prefix . 'inventory_log';
-    }
+/** Columns shown in the admin table, in display order. */
+private static $columns = [
+'id'           => 'ID',
+'product_id'   => 'Product ID',
+'product_name' => 'Product Name',
+'sku'          => 'SKU',
+'date'         => 'Date',
+'stock_change' => 'Change',
+'stock'        => 'Stock',
+'action'       => 'Action',
+'relation'     => 'User',
+'user_id'      => 'User ID',
+'note'         => 'Note',
+];
 
-    public static function activate() {
-        global $wpdb;
+/** Columns that support ORDER BY. */
+private static $sortable_columns = [
+'id', 'product_id', 'product_name', 'sku', 'date', 'stock_change', 'stock', 'action',
+];
 
-        $table_name = $wpdb->prefix . 'inventory_log';
-        $charset_collate = $wpdb->get_charset_collate();
+public function __construct() {
+global $wpdb;
+self::$table_name = $wpdb->prefix . 'inventory_log';
+}
 
-        // Check if table exists
-        if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table_name}'" ) != $table_name ) {
-            require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+// ── Activation / deactivation ────────────────────────────────────────────
 
-            $sql = "CREATE TABLE $table_name (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                product_id BIGINT UNSIGNED NOT NULL,
-                product_name VARCHAR(500) NOT NULL,
-                sku VARCHAR(500) NOT NULL,
-                date DATETIME DEFAULT CURRENT_TIMESTAMP,
-                stock_change FLOAT NOT NULL,
-                stock FLOAT NOT NULL,
-                action VARCHAR(500) NOT NULL,
-                relation VARCHAR(500) NOT NULL,
-                user_id BIGINT UNSIGNED DEFAULT NULL,
-                note TEXT DEFAULT NULL,
-                PRIMARY KEY (id),
-                INDEX (product_id),
-                INDEX (date)
-            ) $charset_collate;";
+public static function activate() {
+global $wpdb;
 
-            dbDelta( $sql );
-        }
-    }
+$table_name      = $wpdb->prefix . 'inventory_log';
+$charset_collate = $wpdb->get_charset_collate();
 
-    public static function deactivate() {
-        // No action needed; keeping data on deactivation
-    }
+if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) !== $table_name ) {
+require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
-    public function run() {
-        add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );    
-        self::hook_into_stock_changes();
-        add_action( 'admin_post_export_inventory_log', [ $this, 'export_inventory_log' ] );
-    }
+$sql = "CREATE TABLE $table_name (
+id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+product_id BIGINT UNSIGNED NOT NULL,
+product_name VARCHAR(500) NOT NULL,
+sku VARCHAR(500) NOT NULL,
+date DATETIME DEFAULT CURRENT_TIMESTAMP,
+stock_change FLOAT NOT NULL,
+stock FLOAT NOT NULL,
+action VARCHAR(500) NOT NULL,
+relation VARCHAR(500) NOT NULL,
+user_id BIGINT UNSIGNED DEFAULT NULL,
+note TEXT DEFAULT NULL,
+PRIMARY KEY (id),
+INDEX (product_id),
+INDEX (date)
+) $charset_collate;";
 
-    public function add_admin_menu() {
-      add_menu_page(
-          'Inventory Log',
-          'Inventory Log',
-          'manage_options',
-          'simple-inventory-log',
-          [ $this, 'render_admin_page' ],
-          'dashicons-clipboard',
-          26
-      );
-    }
+dbDelta( $sql );
+}
+}
 
-    public function render_admin_page() {
-        global $wpdb;
-        $table = self::$table_name;
+public static function deactivate() {
+// Keep data on deactivation; cleanup happens on uninstall.
+}
 
-        // Set up sorting parameters
-        $order_by = isset($_GET['orderby']) ? sanitize_text_field($_GET['orderby']) : 'date'; // Default to sorting by date
-        $order = isset($_GET['order']) && $_GET['order'] === 'asc' ? 'ASC' : 'DESC'; // Default to descending order
+// ── Bootstrap ────────────────────────────────────────────────────────────
 
-        // Set up pagination parameters
-        $per_page = 20;
-        $current_page = isset($_GET['paged']) ? absint($_GET['paged']) : 1;
-        $offset = ($current_page - 1) * $per_page;
+public function run() {
+add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
+add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_assets' ] );
+self::hook_into_stock_changes();
+add_action( 'admin_post_export_inventory_log', [ $this, 'export_inventory_log' ] );
+}
 
-        // Get the total number of records
-        $total_records = $wpdb->get_var("SELECT COUNT(*) FROM $table");
-        $total_pages = ceil($total_records / $per_page);
+public function add_admin_menu() {
+add_menu_page(
+__( 'Inventory Log', 'simple-inventory-log' ),
+__( 'Inventory Log', 'simple-inventory-log' ),
+'manage_options',
+'simple-inventory-log',
+[ $this, 'render_admin_page' ],
+'dashicons-clipboard',
+26
+);
+}
 
-        // Query with sorting and pagination
-        $logs = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM $table ORDER BY {$order_by} {$order} LIMIT %d OFFSET %d",
-            $per_page, 
-            $offset
-        ), ARRAY_A );
+public function enqueue_admin_assets( $hook ) {
+if ( 'toplevel_page_simple-inventory-log' !== $hook ) {
+return;
+}
+wp_enqueue_style(
+'simple-inventory-log',
+SIL_PLUGIN_URL . 'assets/css/admin.css',
+[],
+SIL_VERSION
+);
+}
 
-        echo '<div class="wrap"><h1>Simple Inventory Log</h1>';
-        
-        echo '<div class="tablenav top">';
-        echo '<div class="alignleft actions">';
-        echo '<a href="' . esc_url(admin_url('admin-post.php?action=export_inventory_log')) . '" class="button button-primary">Export to Excel</a>';
-        echo '</div>';
-        echo '<div class="clear"></div>';
-        echo '</div>';
+// ── Admin page ───────────────────────────────────────────────────────────
 
-        if ( empty( $logs ) ) {
-            echo '<p>No logs found.</p>';
-        } else {
-            echo '<table class="widefat fixed striped">';
-            echo '<thead><tr>';
+public function render_admin_page() {
+if ( ! current_user_can( 'manage_options' ) ) {
+wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'simple-inventory-log' ) );
+}
 
-            // Toggle order for sorting columns
-            $toggle_order = ($order === 'ASC') ? 'desc' : 'asc';
+global $wpdb;
+$table = self::$table_name;
 
-            echo '<th><a href="' . esc_url(add_query_arg(['orderby' => 'id', 'order' => $toggle_order], 'admin.php?page=simple-inventory-log')) . '">ID</a></th>';
-            echo '<th><a href="' . esc_url(add_query_arg(['orderby' => 'product_id', 'order' => $toggle_order], 'admin.php?page=simple-inventory-log')) . '">Product ID</a></th>';
-            echo '<th><a href="' . esc_url(add_query_arg(['orderby' => 'product_name', 'order' => $toggle_order], 'admin.php?page=simple-inventory-log')) . '">Product Name</a></th>';
-            echo '<th><a href="' . esc_url(add_query_arg(['orderby' => 'sku', 'order' => $toggle_order], 'admin.php?page=simple-inventory-log')) . '">SKU</a></th>';
-            echo '<th><a href="' . esc_url(add_query_arg(['orderby' => 'date', 'order' => $toggle_order], 'admin.php?page=simple-inventory-log')) . '">Date</a></th>';
-            echo '<th>Change</th><th>Stock</th><th>Action</th><th>User Name</th><th>User ID</th><th>Note</th>';
-            echo '</tr></thead><tbody>';
+// ── Sorting ──────────────────────────────────────────────────────────
+$order_by = ( isset( $_GET['orderby'] ) && in_array( $_GET['orderby'], self::$sortable_columns, true ) )
+? sanitize_text_field( $_GET['orderby'] )
+: 'date';
+$order    = ( isset( $_GET['order'] ) && strtolower( $_GET['order'] ) === 'asc' ) ? 'ASC' : 'DESC';
 
-            foreach ( $logs as $log ) {
-                echo '<tr>';
-                foreach ( $log as $value ) {
-                    echo '<td>' . esc_html( $value ) . '</td>';
-                }
-                echo '</tr>';
-            }
+// ── Pagination ───────────────────────────────────────────────────────
+$per_page     = 20;
+$current_page = isset( $_GET['paged'] ) ? max( 1, absint( $_GET['paged'] ) ) : 1;
+$offset       = ( $current_page - 1 ) * $per_page;
 
-            echo '</tbody></table>';
+// ── Filters ──────────────────────────────────────────────────────────
+$product_search = isset( $_GET['product_search'] ) ? sanitize_text_field( $_GET['product_search'] ) : '';
+$action_filter  = isset( $_GET['action_filter'] )  ? sanitize_text_field( $_GET['action_filter'] )  : '';
+$date_from      = isset( $_GET['date_from'] )      ? sanitize_text_field( $_GET['date_from'] )      : '';
+$date_to        = isset( $_GET['date_to'] )        ? sanitize_text_field( $_GET['date_to'] )        : '';
 
-            $this->render_pagination($current_page, $total_pages);
-        }
+// ── Build WHERE clause ───────────────────────────────────────────────
+$where  = '1=1';
+$params = [];
 
-        echo '</div>';
-    }
+if ( $product_search !== '' ) {
+$like     = '%' . $wpdb->esc_like( $product_search ) . '%';
+$where   .= ' AND (product_name LIKE %s OR sku LIKE %s)';
+$params[] = $like;
+$params[] = $like;
+}
 
-    public function render_pagination($current_page, $total_pages) {
-        if ($total_pages > 1) {
-            $base_url = admin_url('admin.php?page=simple-inventory-log');
-            $pagination = '<div class="tablenav"><div class="tablenav-pages" style="display: flex; gap: 5px; flex-wrap: wrap;">';
-            
-            // Previous page link
-            if ($current_page > 1) {
-                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', 1, $base_url)) . '">&laquo; First</a>';
-                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $current_page - 1, $base_url)) . '">Prev</a>';
-            }
+if ( $action_filter !== '' ) {
+if ( $action_filter === 'manual' ) {
+$where .= " AND action = 'manual'";
+} else {
+$where   .= ' AND action LIKE %s';
+$params[] = $wpdb->esc_like( $action_filter ) . '_%';
+}
+}
 
-            // Calculate page range (max 10 pages)
-            $max_pages = 10;
-            $half_range = floor($max_pages / 2);
-            $start_page = max(1, $current_page - $half_range);
-            $end_page = min($total_pages, $start_page + $max_pages - 1);
-            
-            // Adjust start_page if end_page is at total_pages
-            if ($end_page - $start_page + 1 < $max_pages) {
-                $start_page = max(1, $end_page - $max_pages + 1);
-            }
+if ( $date_from !== '' ) {
+$where   .= ' AND date >= %s';
+$params[] = $date_from . ' 00:00:00';
+}
 
-            // Show ellipsis if there are pages before start_page
-            if ($start_page > 1) {
-                $pagination .= '<span style="align-self: center;">...</span>';
-            }
+if ( $date_to !== '' ) {
+$where   .= ' AND date <= %s';
+$params[] = $date_to . ' 23:59:59';
+}
 
-            // Page numbers
-            for ($i = $start_page; $i <= $end_page; $i++) {
-                $button_class = $i === $current_page ? 'button button-primary' : 'button';
-                $pagination .= '<a class="' . $button_class . '" href="' . esc_url(add_query_arg('paged', $i, $base_url)) . '">' . $i . '</a>';
-            }
+// ── Counts & data ────────────────────────────────────────────────────
+// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+$count_sql     = "SELECT COUNT(*) FROM {$table} WHERE {$where}";
+$total_records = empty( $params )
+? $wpdb->get_var( $count_sql ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+: $wpdb->get_var( $wpdb->prepare( $count_sql, ...$params ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
-            // Show ellipsis if there are pages after end_page
-            if ($end_page < $total_pages) {
-                $pagination .= '<span style="align-self: center;">...</span>';
-            }
+$total_pages = (int) ceil( $total_records / $per_page );
 
-            // Next page link
-            if ($current_page < $total_pages) {
-                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $current_page + 1, $base_url)) . '">Next</a>';
-                $pagination .= '<a class="button" href="' . esc_url(add_query_arg('paged', $total_pages, $base_url)) . '">Last &raquo;</a>';
-            }
+// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+$data_sql    = "SELECT * FROM {$table} WHERE {$where} ORDER BY {$order_by} {$order} LIMIT %d OFFSET %d";
+$data_params = array_merge( $params, [ $per_page, $offset ] );
+$logs        = $wpdb->get_results( $wpdb->prepare( $data_sql, ...$data_params ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
-            $pagination .= '</div></div>';
-            echo $pagination;
-        }
-    }
+// Extra args threaded through sort / pagination links.
+$extra_args = array_filter( [
+'product_search' => $product_search,
+'action_filter'  => $action_filter,
+'date_from'      => $date_from,
+'date_to'        => $date_to,
+] );
 
-    public static function get_table_name() {
-        return self::$table_name;
-    }
+// ── Render ───────────────────────────────────────────────────────────
+echo '<div class="wrap">';
+echo '<h1>' . esc_html__( 'Simple Inventory Log', 'simple-inventory-log' ) . '</h1>';
 
+$this->render_filters( $product_search, $action_filter, $date_from, $date_to );
 
-    // Log stock changes
-    public static function log_stock_change( $product_id, $change, $new_stock, $action = '', $note = '' ) {
-        global $wpdb;
+$export_url = wp_nonce_url(
+admin_url( 'admin-post.php?action=export_inventory_log' ),
+'export_inventory_log'
+);
+echo '<div class="tablenav top">';
+echo '<div class="alignleft actions">';
+echo '<a href="' . esc_url( $export_url ) . '" class="button button-primary">' . esc_html__( 'Export to CSV', 'simple-inventory-log' ) . '</a>';
+echo '</div><div class="clear"></div></div>';
 
-        // product data
-        $product = wc_get_product( $product_id );
-        $product_name = $product ? $product->get_name() : '';
-        $sku = $product ? $product->get_sku() : '';
+if ( empty( $logs ) ) {
+echo '<p>' . esc_html__( 'No logs found.', 'simple-inventory-log' ) . '</p>';
+} else {
+$toggle_order = ( $order === 'ASC' ) ? 'desc' : 'asc';
 
-        // user data
-        $current_user_id = get_current_user_id();
-        if ($current_user_id) {
-            $user = get_userdata( $current_user_id );
-            if ( $user ) {
-                $name  = $user->display_name;
-                $email = $user->user_email;
-                $user_name = $name . ' (' . $email . ')';
-            } 
-        } else {
-            $user_name = 'System';
-            $current_user_id = '';
-        }       
+echo '<table class="widefat fixed striped sil-table">';
+echo '<thead><tr>';
 
-        $wpdb->insert(
-            self::$table_name,
-            [
-                'product_id'    => $product_id,
-                'product_name'    => $product_name,
-                'sku'    => $sku,
-                'stock_change'  => $change,
-                'stock'         => $new_stock,
-                'action'        => $action,
-                'relation'      => $user_name,
-                'user_id'       => $current_user_id,
-                'note'          => $note,
-                'date'          => current_time( 'mysql' ),
-            ],
-            [
-                '%d', // product_id (integer)
-                '%s', // product_name (string)
-                '%s', // sku (string)
-                '%f', // stock_change (float)
-                '%f', // stock (float)
-                '%s', // action (string)
-                '%s', // relation (string)
-                '%d', // user_id (integer)
-                '%s', // note (string)
-                '%s', // date (string)
-            ]
-        );
-    }
+foreach ( self::$columns as $col_key => $col_label ) {
+if ( in_array( $col_key, self::$sortable_columns, true ) ) {
+$is_active = ( $order_by === $col_key );
+$col_order = $is_active ? $toggle_order : 'desc';
+$th_class  = $is_active ? 'sorted sorted-' . strtolower( $order ) : 'sortable';
+$sort_url  = esc_url( add_query_arg(
+array_merge(
+$extra_args,
+[ 'page' => 'simple-inventory-log', 'orderby' => $col_key, 'order' => $col_order ]
+),
+admin_url( 'admin.php' )
+) );
+echo '<th class="' . esc_attr( $th_class ) . '"><a href="' . $sort_url . '">' . esc_html( $col_label ) . '</a></th>';
+} else {
+echo '<th>' . esc_html( $col_label ) . '</th>';
+}
+}
 
-    // Handle manual stock changes (admin ui or programmatically)
-    //// woocommerce_product_before_set_stock to save previous stock in a transient
-    //// woocommerce_product_set_stock to log the new stock
+echo '</tr></thead><tbody>';
 
-    public static function hook_into_stock_changes() {
-        add_action( 'woocommerce_product_set_stock', [ __CLASS__, 'handle_stock_change' ], 10, 1 );
-        add_action( 'update_post_metadata', [ __CLASS__, 'handle_stock_change_meta_transient' ], 10, 5 );
-        add_action( 'updated_post_meta', [ __CLASS__, 'handle_stock_change_meta' ], 10, 4 );
-        add_action( 'woocommerce_product_before_set_stock', [ __CLASS__, 'before_handle_stock_change' ], 10, 1 );
-        add_action( 'woocommerce_checkout_order_created', [ __CLASS__, 'handle_stock_change_action_order' ], 10, 1 );
-        add_action( 'woocommerce_order_refunded', [ __CLASS__, 'handle_stock_change_action_refund' ], 10, 1 );
-    }
+foreach ( $logs as $log ) {
+echo '<tr>';
+foreach ( self::$columns as $col_key => $col_label ) {
+$value = isset( $log[ $col_key ] ) ? $log[ $col_key ] : '';
+if ( $col_key === 'stock_change' ) {
+$css     = ( $value > 0 ) ? 'sil-stock-positive' : ( ( $value < 0 ) ? 'sil-stock-negative' : '' );
+$display = ( $value > 0 ) ? '+' . $value : $value;
+echo '<td class="' . esc_attr( $css ) . '">' . esc_html( $display ) . '</td>';
+} else {
+echo '<td>' . esc_html( $value ) . '</td>';
+}
+}
+echo '</tr>';
+}
 
-    public static function handle_stock_change( $product ) {
-        $product_id = $product->get_id();
-        $user_id = get_current_user_id();
+echo '</tbody></table>';
 
-        $new_stock = $product->get_stock_quantity();
+$this->render_pagination( $current_page, $total_pages, $extra_args );
+}
 
-        $old_stock = get_transient( "sil_old_stock_{$product_id}_{$user_id}" );
-        delete_transient( "sil_old_stock_{$product_id}_{$user_id}" );
+echo '</div>'; // .wrap
+}
 
-        $action = 'manual';
-        $action_transient_key = "sil_stock_action_queue_{$product_id}";
-        $queue = get_transient( $action_transient_key );
+// ── Filter form ──────────────────────────────────────────────────────────
 
-        if ( is_array( $queue ) && count( $queue ) > 0 ) {
-            $action = array_shift( $queue ); // FIFO: get first action
-            set_transient( $action_transient_key, $queue, 10 * MINUTE_IN_SECONDS );
-        }
+private function render_filters( $product_search, $action_filter, $date_from, $date_to ) {
+$has_filters = ( $product_search !== '' || $action_filter !== '' || $date_from !== '' || $date_to !== '' );
+?>
+<form method="get" action="" class="sil-filters">
+<input type="hidden" name="page" value="simple-inventory-log" />
 
-        if ( $old_stock === false ) {
-            $change = 0;
-        } else {
-            $change = $new_stock - (float) $old_stock;
-        }
+<label>
+<?php esc_html_e( 'Product', 'simple-inventory-log' ); ?>
+<input type="text" name="product_search"
+value="<?php echo esc_attr( $product_search ); ?>"
+placeholder="<?php esc_attr_e( 'Name or SKU', 'simple-inventory-log' ); ?>" />
+</label>
 
-        if ( $change !== 0 ) {
-            Simple_Inventory_Log::log_stock_change(
-                $product_id,
-                $change,
-                $new_stock,
-                $action,
-                ''
-            );
-        }
-    }
+<label>
+<?php esc_html_e( 'Action', 'simple-inventory-log' ); ?>
+<select name="action_filter">
+<option value=""><?php esc_html_e( 'All actions', 'simple-inventory-log' ); ?></option>
+<option value="manual"    <?php selected( $action_filter, 'manual' ); ?>><?php esc_html_e( 'Manual', 'simple-inventory-log' ); ?></option>
+<option value="order"     <?php selected( $action_filter, 'order' ); ?>><?php esc_html_e( 'Order', 'simple-inventory-log' ); ?></option>
+<option value="refund"    <?php selected( $action_filter, 'refund' ); ?>><?php esc_html_e( 'Refund', 'simple-inventory-log' ); ?></option>
+<option value="cancelled" <?php selected( $action_filter, 'cancelled' ); ?>><?php esc_html_e( 'Cancelled', 'simple-inventory-log' ); ?></option>
+</select>
+</label>
 
-    public static function handle_stock_change_meta_transient( $check, $object_id, $meta_key, $meta_value, $prev_value ) {
-        if ( $meta_key === '_stock' ) {
-            $product = wc_get_product( $object_id );
-            $product_id = $product->get_id();
-            $user_id = get_current_user_id();
+<label>
+<?php esc_html_e( 'From', 'simple-inventory-log' ); ?>
+<input type="date" name="date_from" value="<?php echo esc_attr( $date_from ); ?>" />
+</label>
 
-            $old_stock = floatval(get_post_meta( $object_id, '_stock', true ));
-            $stock_change_transient = set_transient( "sil_old_stock_{$product_id}_{$user_id}", $old_stock, 5 * MINUTE_IN_SECONDS );
-        }
-    }
+<label>
+<?php esc_html_e( 'To', 'simple-inventory-log' ); ?>
+<input type="date" name="date_to" value="<?php echo esc_attr( $date_to ); ?>" />
+</label>
 
-    public static function handle_stock_change_meta(  $meta_id, $object_id, $meta_key, $meta_value ) {
-        if ( $meta_key === '_stock' ) {
-            $product = wc_get_product( $object_id );
-            self::handle_stock_change( $product );
-        }
-    }
+<button type="submit" class="button"><?php esc_html_e( 'Filter', 'simple-inventory-log' ); ?></button>
 
-    public static function before_handle_stock_change( $product ) {
-        $product_id = $product->get_id();
-        $user_id = get_current_user_id();
-        $old_stock = floatval(get_post_meta( $product_id, '_stock', true ));
+<?php if ( $has_filters ) : ?>
+<a href="<?php echo esc_url( admin_url( 'admin.php?page=simple-inventory-log' ) ); ?>" class="button">
+<?php esc_html_e( 'Reset', 'simple-inventory-log' ); ?>
+</a>
+<?php endif; ?>
+</form>
+<?php
+}
 
-        $stock_change_transient = set_transient( "sil_old_stock_{$product_id}_{$user_id}", $old_stock, 5 * MINUTE_IN_SECONDS );
-    }
+// ── Pagination ───────────────────────────────────────────────────────────
 
-    // Handle stock changes from orders created through the checkout process
-    public static function handle_stock_change_action_order( $order ) {
-        foreach ( $order->get_items() as $item ) {
-            $product = $item->get_product();
-            if ( ! $product ) continue;
+public function render_pagination( $current_page, $total_pages, $extra_args = [] ) {
+if ( $total_pages <= 1 ) {
+return;
+}
 
-            $product_id = $product->get_id();
-            $order_id = $order->get_id();
-            $transient_key = "sil_stock_action_queue_{$product_id}";
+$base_url = add_query_arg(
+array_merge( $extra_args, [ 'page' => 'simple-inventory-log' ] ),
+admin_url( 'admin.php' )
+);
 
-            $queue = get_transient( $transient_key );
-            if ( ! is_array( $queue ) ) {
-                $queue = [];
-            }
+echo '<div class="tablenav"><div class="sil-pagination">';
 
-            $queue[] = "order_{$order_id}";
+if ( $current_page > 1 ) {
+echo '<a class="button" href="' . esc_url( add_query_arg( 'paged', 1, $base_url ) ) . '">&laquo; ' . esc_html__( 'First', 'simple-inventory-log' ) . '</a>';
+echo '<a class="button" href="' . esc_url( add_query_arg( 'paged', $current_page - 1, $base_url ) ) . '">' . esc_html__( 'Prev', 'simple-inventory-log' ) . '</a>';
+}
 
-            set_transient( $transient_key, $queue, 10 * MINUTE_IN_SECONDS );
-        }
-    }
+$max_pages  = 10;
+$half_range = (int) floor( $max_pages / 2 );
+$start_page = max( 1, $current_page - $half_range );
+$end_page   = min( $total_pages, $start_page + $max_pages - 1 );
 
-    public function export_inventory_log() {
-        // Check user capabilities
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
-        }
+if ( $end_page - $start_page + 1 < $max_pages ) {
+$start_page = max( 1, $end_page - $max_pages + 1 );
+}
 
-        // get data
-        global $wpdb;
-        $table = self::$table_name;
-        $logs = $wpdb->get_results( "SELECT * FROM $table ORDER BY date DESC", ARRAY_A );
+if ( $start_page > 1 ) {
+echo '<span class="ellipsis">&hellip;</span>';
+}
 
-        if ( empty( $logs ) ) {
-            // Redirect back to the log page with a message
-            wp_redirect( admin_url( 'admin.php?page=simple-inventory-log&export_status=empty' ) );
-            exit;
-        }
-        
-        // Set the headers for the CSV download
-        header('Content-Type: text/csv');
-        header('Content-Disposition: attachment; filename="inventory_log.csv"');
-        header('Pragma: no-cache');
-        header('Expires: 0');
+for ( $i = $start_page; $i <= $end_page; $i++ ) {
+$btn_class = ( $i === $current_page ) ? 'button button-primary' : 'button';
+echo '<a class="' . esc_attr( $btn_class ) . '" href="' . esc_url( add_query_arg( 'paged', $i, $base_url ) ) . '">' . esc_html( $i ) . '</a>';
+}
 
-        $output = fopen('php://output', 'w');
+if ( $end_page < $total_pages ) {
+echo '<span class="ellipsis">&hellip;</span>';
+}
 
-        $data = array();
+if ( $current_page < $total_pages ) {
+echo '<a class="button" href="' . esc_url( add_query_arg( 'paged', $current_page + 1, $base_url ) ) . '">' . esc_html__( 'Next', 'simple-inventory-log' ) . '</a>';
+echo '<a class="button" href="' . esc_url( add_query_arg( 'paged', $total_pages, $base_url ) ) . '">' . esc_html__( 'Last', 'simple-inventory-log' ) . ' &raquo;</a>';
+}
 
-        // set header row
-        $header = array(
-            'ID',
-            'Product ID',
-            'Product Name',
-            'SKU',
-            'Date',
-            'Stock Change',
-            'Stock',
-            'Action',
-            'User Name',
-            'User ID',
-            'Note'
-        );
-        array_push($data, $header);
+echo '</div></div>';
+}
 
-        // set data rows
-        foreach ( $logs as $log ) {
-            array_push($data, array(
-                $log['id'],
-                $log['product_id'],
-                $log['product_name'],
-                $log['sku'],
-                $log['date'],
-                $log['stock_change'],
-                $log['stock'],
-                $log['action'],
-                $log['relation'],
-                $log['user_id'],
-                $log['note']
-            ));
-        }
+// ── Table name helper ─────────────────────────────────────────────────────
 
-        // Populate the CSV with data
-        foreach ($data as $item) {
-            fputcsv($output, $item);
-        }
+public static function get_table_name() {
+return self::$table_name;
+}
 
-        // Close the output stream
-        fclose($output);
-        exit;
-    }
+// ── Stock-change logging ──────────────────────────────────────────────────
+
+public static function log_stock_change( $product_id, $change, $new_stock, $action = '', $note = '' ) {
+global $wpdb;
+
+$product      = wc_get_product( $product_id );
+$product_name = $product ? $product->get_name() : '';
+$sku          = $product ? $product->get_sku()  : '';
+
+$current_user_id = get_current_user_id();
+if ( $current_user_id ) {
+$user      = get_userdata( $current_user_id );
+$user_name = $user ? $user->display_name . ' (' . $user->user_email . ')' : '';
+} else {
+$user_name       = 'System';
+$current_user_id = null;
+}
+
+$wpdb->insert(
+self::$table_name,
+[
+'product_id'   => $product_id,
+'product_name' => $product_name,
+'sku'          => $sku,
+'stock_change' => $change,
+'stock'        => $new_stock,
+'action'       => $action,
+'relation'     => $user_name,
+'user_id'      => $current_user_id,
+'note'         => $note,
+'date'         => current_time( 'mysql' ),
+],
+[ '%d', '%s', '%s', '%f', '%f', '%s', '%s', '%d', '%s', '%s' ]
+);
+}
+
+// ── Hooks into WooCommerce stock changes ──────────────────────────────────
+
+public static function hook_into_stock_changes() {
+// Simple products
+add_action( 'woocommerce_product_before_set_stock', [ __CLASS__, 'before_handle_stock_change' ], 10, 1 );
+add_action( 'woocommerce_product_set_stock',        [ __CLASS__, 'handle_stock_change' ],        10, 1 );
+
+// Variation products
+add_action( 'woocommerce_variation_before_set_stock', [ __CLASS__, 'before_handle_stock_change' ], 10, 1 );
+add_action( 'woocommerce_variation_set_stock',        [ __CLASS__, 'handle_stock_change' ],        10, 1 );
+
+// Fallback: direct _stock meta updates (e.g. quick-edit, bulk-edit, imports, REST API)
+add_action( 'update_post_metadata', [ __CLASS__, 'handle_stock_change_meta_transient' ], 10, 5 );
+add_action( 'updated_post_meta',    [ __CLASS__, 'handle_stock_change_meta' ],           10, 4 );
+
+// Action-type tagging
+add_action( 'woocommerce_checkout_order_created', [ __CLASS__, 'handle_stock_change_action_order' ],     10, 1 );
+add_filter( 'woocommerce_create_refund',          [ __CLASS__, 'handle_stock_change_action_refund' ],    10, 2 );
+add_action( 'woocommerce_order_status_cancelled', [ __CLASS__, 'handle_stock_change_action_cancelled' ], 9,  1 );
+}
+
+// ── Stock change handlers ─────────────────────────────────────────────────
+
+/**
+ * Cache the current stock before a WooCommerce-triggered change so we can
+ * compute the delta afterwards.
+ */
+public static function before_handle_stock_change( $product ) {
+$product_id = $product->get_id();
+$user_id    = get_current_user_id();
+$old_stock  = floatval( get_post_meta( $product_id, '_stock', true ) );
+
+set_transient( "sil_old_stock_{$product_id}_{$user_id}", $old_stock, 5 * MINUTE_IN_SECONDS );
+}
+
+/**
+ * Called after WooCommerce has updated the stock value.
+ */
+public static function handle_stock_change( $product ) {
+$product_id = $product->get_id();
+$user_id    = get_current_user_id();
+$new_stock  = $product->get_stock_quantity();
+
+$old_stock = get_transient( "sil_old_stock_{$product_id}_{$user_id}" );
+delete_transient( "sil_old_stock_{$product_id}_{$user_id}" );
+
+// Consume the action from the per-product FIFO queue.
+$action    = 'manual';
+$queue_key = "sil_stock_action_queue_{$product_id}";
+$queue     = get_transient( $queue_key );
+
+if ( is_array( $queue ) && count( $queue ) > 0 ) {
+$action = array_shift( $queue );
+set_transient( $queue_key, $queue, 10 * MINUTE_IN_SECONDS );
+}
+
+if ( false === $old_stock ) {
+// No baseline recorded – skip to avoid duplicate / spurious logging.
+return;
+}
+
+$change = $new_stock - (float) $old_stock;
+
+if ( 0.0 !== $change ) {
+self::log_stock_change( $product_id, $change, $new_stock, $action );
+}
+}
+
+/**
+ * Fallback: capture old stock before a direct _stock meta update.
+ * Fires on the `update_post_metadata` filter (before the write).
+ */
+public static function handle_stock_change_meta_transient( $check, $object_id, $meta_key, $meta_value, $prev_value ) {
+if ( '_stock' !== $meta_key ) {
+return $check;
+}
+
+$product = wc_get_product( $object_id );
+if ( ! $product ) {
+return $check;
+}
+
+$user_id   = get_current_user_id();
+$old_stock = floatval( get_post_meta( $object_id, '_stock', true ) );
+set_transient( "sil_old_stock_{$object_id}_{$user_id}", $old_stock, 5 * MINUTE_IN_SECONDS );
+
+return $check;
+}
+
+/**
+ * Fallback: log after a direct _stock meta update.
+ * Fires on the `updated_post_meta` action (after the write).
+ */
+public static function handle_stock_change_meta( $meta_id, $object_id, $meta_key, $meta_value ) {
+if ( '_stock' !== $meta_key ) {
+return;
+}
+
+$product = wc_get_product( $object_id );
+if ( ! $product ) {
+return;
+}
+
+self::handle_stock_change( $product );
+}
+
+// ── Action-type tagging ───────────────────────────────────────────────────
+
+/**
+ * Tag upcoming stock reductions with the order ID so logs show "order_XXX".
+ */
+public static function handle_stock_change_action_order( $order ) {
+foreach ( $order->get_items() as $item ) {
+$product = $item->get_product();
+if ( ! $product ) {
+continue;
+}
+
+$product_id = $product->get_id();
+$order_id   = $order->get_id();
+$queue_key  = "sil_stock_action_queue_{$product_id}";
+$queue      = get_transient( $queue_key );
+
+if ( ! is_array( $queue ) ) {
+$queue = [];
+}
+
+$queue[] = "order_{$order_id}";
+set_transient( $queue_key, $queue, 10 * MINUTE_IN_SECONDS );
+}
+}
+
+/**
+ * Tag upcoming stock restorations with the refund ID so logs show "refund_XXX".
+ *
+ * Hooked as a filter on `woocommerce_create_refund`, which fires inside
+ * wc_create_refund() BEFORE wc_increase_stock_levels() is called.
+ *
+ * @param WC_Order_Refund|WP_Error $refund Refund object (may not have an ID yet).
+ * @param array                    $args   Arguments passed to wc_create_refund().
+ * @return WC_Order_Refund|WP_Error Unmodified $refund (required by filter).
+ */
+public static function handle_stock_change_action_refund( $refund, $args ) {
+if ( empty( $args['restock_items'] ) || empty( $args['line_items'] ) ) {
+return $refund;
+}
+
+$order_id = ! empty( $args['order_id'] ) ? (int) $args['order_id'] : 0;
+$order    = $order_id ? wc_get_order( $order_id ) : null;
+
+if ( ! $order ) {
+return $refund;
+}
+
+$refund_id = ( is_object( $refund ) && is_callable( [ $refund, 'get_id' ] ) ) ? (int) $refund->get_id() : 0;
+$tag       = 'refund_' . ( $refund_id ?: $order_id );
+
+foreach ( $args['line_items'] as $item_id => $item_data ) {
+$item = $order->get_item( $item_id );
+if ( ! $item || ! is_callable( [ $item, 'get_product' ] ) ) {
+continue;
+}
+
+$product = $item->get_product();
+if ( ! $product ) {
+continue;
+}
+
+$product_id = $product->get_id();
+$queue_key  = "sil_stock_action_queue_{$product_id}";
+$queue      = get_transient( $queue_key );
+
+if ( ! is_array( $queue ) ) {
+$queue = [];
+}
+
+$queue[] = $tag;
+set_transient( $queue_key, $queue, 10 * MINUTE_IN_SECONDS );
+}
+
+return $refund;
+}
+
+/**
+ * Tag upcoming stock restorations so logs show "cancelled_XXX".
+ *
+ * Runs at priority 9, before WooCommerce restores stock at priority 10.
+ */
+public static function handle_stock_change_action_cancelled( $order_id ) {
+$order = wc_get_order( $order_id );
+if ( ! $order ) {
+return;
+}
+
+foreach ( $order->get_items() as $item ) {
+if ( ! is_callable( [ $item, 'get_product' ] ) ) {
+continue;
+}
+
+$product = $item->get_product();
+if ( ! $product || ! $product->managing_stock() ) {
+continue;
+}
+
+$product_id = $product->get_id();
+$queue_key  = "sil_stock_action_queue_{$product_id}";
+$queue      = get_transient( $queue_key );
+
+if ( ! is_array( $queue ) ) {
+$queue = [];
+}
+
+$queue[] = "cancelled_{$order_id}";
+set_transient( $queue_key, $queue, 10 * MINUTE_IN_SECONDS );
+}
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────
+
+public function export_inventory_log() {
+if ( ! current_user_can( 'manage_options' ) ) {
+wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'simple-inventory-log' ) );
+}
+
+check_admin_referer( 'export_inventory_log' );
+
+global $wpdb;
+$table = self::$table_name;
+// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+$logs = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY date DESC", ARRAY_A );
+
+if ( empty( $logs ) ) {
+wp_redirect( admin_url( 'admin.php?page=simple-inventory-log&export_status=empty' ) );
+exit;
+}
+
+header( 'Content-Type: text/csv; charset=utf-8' );
+header( 'Content-Disposition: attachment; filename="inventory_log_' . gmdate( 'Y-m-d' ) . '.csv"' );
+header( 'Pragma: no-cache' );
+header( 'Expires: 0' );
+
+$output = fopen( 'php://output', 'w' );
+
+fputcsv( $output, [ 'ID', 'Product ID', 'Product Name', 'SKU', 'Date', 'Stock Change', 'Stock', 'Action', 'User', 'User ID', 'Note' ] );
+
+foreach ( $logs as $log ) {
+fputcsv( $output, [
+$log['id'],
+$log['product_id'],
+$log['product_name'],
+$log['sku'],
+$log['date'],
+$log['stock_change'],
+$log['stock'],
+$log['action'],
+$log['relation'],
+$log['user_id'],
+$log['note'],
+] );
+}
+
+fclose( $output );
+exit;
+}
 }
